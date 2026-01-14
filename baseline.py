@@ -89,3 +89,19 @@ for i, (train_idx, val_idx) in enumerate(kf.split(train_dates)):
     print(f"Fold {i+1}: {score*100:.2f}%")
 
 print(f"Score Moyen Validation: {np.mean(scores)*100:.2f}%")
+
+#  SOUMISSION 
+print("\nEntrainement final sur tout le dataset...")
+final_model = RandomForestClassifier(**rf_params)
+final_model.fit(X_train_full.fillna(0), y_train_full)
+
+y_test_proba = final_model.predict_proba(test[features].fillna(0))[:, 1]
+
+# Post-processing
+sub_test = test.copy()
+sub_test['pred_proba'] = y_test_proba
+y_test_class = sub_test.groupby('DATE')['pred_proba'].transform(lambda x: x > x.median()).values
+
+submission = pd.Series(y_test_class, index=test.index, name=target)
+submission.to_csv(OUTPUT_FILE, index=True, header=True)
+print(f"Terminé ! Fichier sauvegardé : {OUTPUT_FILE}")

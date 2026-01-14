@@ -38,14 +38,23 @@ for shift in shifts:
         for data in [train, test]:
             data[name] = data.groupby(gb_features)[feat].transform(stat)
 
-# Définition des colonnes à utiliser
+# --- MODIFICATION ETAPE 5 ---
 target = 'RET'
-n_shifts = 5 
+n_shifts = 20  # ON PASSE A 20 JOURS (Maximum disponible)
 features = ['RET_%d' % (i + 1) for i in range(n_shifts)]
 features += ['VOLUME_%d' % (i + 1) for i in range(n_shifts)]
 features += new_features
 
+# AJOUT : Volatilité (Ecart-type des 20 derniers jours)
+print("Ajout de la feature Volatilité...")
+ret_cols = [f'RET_{i+1}' for i in range(20)]
+for data in [train, test]:
+    data['VOLATILITY_20'] = data[ret_cols].std(axis=1)
+
+features.append('VOLATILITY_20')
+
 print(f"Features prêtes : {len(features)} variables.")
+
 # Cross Validation
 X_train_full = train[features]
 y_train_full = train[target]

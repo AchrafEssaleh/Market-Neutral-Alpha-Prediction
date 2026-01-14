@@ -38,7 +38,7 @@ for shift in shifts:
         for data in [train, test]:
             data[name] = data.groupby(gb_features)[feat].transform(stat)
 
-# --- MODIFICATION ETAPE 5 ---
+# MODIFICATION ETAPE 5 
 target = 'RET'
 n_shifts = 20  # ON PASSE A 20 JOURS (Maximum disponible)
 features = ['RET_%d' % (i + 1) for i in range(n_shifts)]
@@ -51,6 +51,31 @@ ret_cols = [f'RET_{i+1}' for i in range(20)]
 for data in [train, test]:
     data['VOLATILITY_20'] = data[ret_cols].std(axis=1)
 
+# Calcul simple du RSI (Relative Strength Index) (approximatif sur 14 jours)
+def calculate_rsi(data, window=14):
+    # On récupère les colonnes RET_1 à RET_14
+    cols = [f'RET_{i+1}' for i in range(window)]
+    # On inverse l'ordre pour avoir du plus vieux au plus récent (RET_14... RET_1)
+    # Note : Dans ce dataset, l'ordre temporel précis est parfois flou, 
+    # mais la moyenne des gains vs pertes reste valide.
+    
+    # On sépare gains et pertes
+    # Astuce numpy : on travaille sur tout le tableau d'un coup
+    values = data[cols].values
+    gains = np.maximum(values, 0)
+    losses = np.abs(np.minimum(values, 0))
+    
+    avg_gain = np.mean(gains, axis=1)
+    avg_loss = np.mean(losses, axis=1)
+    
+    rs = avg_gain / (avg_loss + 1e-10) # Eviter division par zero
+    rsi = 100 - (100 / (1 + rs))
+    return rsi
+
+print("Ajout du RSI...")
+train['RSI'] = calculate_rsi(train)
+test['RSI'] = calculate_rsi(test)
+features.append('RSI')
 features.append('VOLATILITY_20')
 
 print(f"Features prêtes : {len(features)} variables.")

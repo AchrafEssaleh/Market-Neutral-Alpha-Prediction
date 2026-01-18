@@ -1,4 +1,3 @@
-# feature_engineering_plus.py
 from __future__ import annotations
 
 import numpy as np
@@ -14,14 +13,21 @@ def _safe_div(a: pd.Series, b: pd.Series, eps: float = 1e-6) -> pd.Series:
 
 def add_features_plus(X: pd.DataFrame, *, keep_original: bool = True) -> pd.DataFrame:
     """
-    Ajoute des features NN-friendly + des features "tabular boost" utiles pour XGBoost :
-    - ratios locaux (trend/vol) supplémentaires
+    Ajoute des features optimisées pour modèles tabulaires type XGBoost / LightGBM :
+    - stats fenêtres (mean/std/absmean)
+    - momentum
+    - ratios/SNR
+    - fractions directionnelles
+    - volume shock/ratio
+    - interactions
+    - slopes (trend)
+    - missingness
     - range (max-min)
-    - ranks intra-date (cross-sectionnels) sur quelques signaux clés
+    - ranks intra-date (cross-sectionnels)
 
-    IMPORTANT:
-    - Les ranks intra-date utilisent uniquement X (pas y) donc pas de fuite "label".
-    - En CV, idéalement recalculer ces ranks dans chaque fold (mais ce module ne fait que transformer X).
+    Notes:
+    - Les ranks intra-date utilisent uniquement X (pas y) => pas de fuite label.
+    - En CV : idéalement recalculer les ranks dans chaque fold (ce module transforme juste X).
     """
     df = X.copy()
 
@@ -57,7 +63,7 @@ def add_features_plus(X: pd.DataFrame, *, keep_original: bool = True) -> pd.Data
     df["RET_snr_5_20"] = _safe_div(df["RET_mean_5"], df["RET_std_20"])
     df["RET_snr_10_20"] = _safe_div(df["RET_mean_10"], df["RET_std_20"])
 
-    # 🔥 NOUVEAU : ratios "locaux" (souvent utiles en XGB)
+    # ratios "locaux" (souvent utiles en XGB/LGBM)
     df["RET_snr_3_5"] = _safe_div(df["RET_mean_3"], df["RET_std_5"])
     df["RET_snr_5_5"] = _safe_div(df["RET_mean_5"], df["RET_std_5"])
     df["RET_snr_10_10"] = _safe_div(df["RET_mean_10"], df["RET_std_10"])
@@ -104,19 +110,15 @@ def add_features_plus(X: pd.DataFrame, *, keep_original: bool = True) -> pd.Data
     df["VOL_nan_count"] = np.isnan(V_np).sum(axis=1)
 
     # -----------------------
-    # 9) 🔥 NOUVEAU : range (max-min) utile en arbres
+    # 9) Range (max-min) utile en arbres
     # -----------------------
-    # Ici on le calcule uniquement sur 20 (stabilité)
     df["RET_range_20"] = (R.max(axis=1) - R.min(axis=1)).astype(float)
     df["VOL_range_20"] = (V.max(axis=1) - V.min(axis=1)).astype(float)
 
     # -----------------------
-    # 10) 🔥 NOUVEAU : ranks intra-date (cross-sectional)
+    # 10) Ranks intra-date (cross-sectional)
     # -----------------------
-    # Ces ranks comparent une action aux autres le même jour.
-    # Très utiles pour les modèles tabulaires (XGB/LightGBM), parfois aussi pour MLP.
     if "DATE" in df.columns:
-        # on rank en percentile (0..1)
         df["RET_last1_rank_date"] = df.groupby("DATE")["RET_last1"].rank(pct=True, method="average")
         df["VOL_last1_rank_date"] = df.groupby("DATE")["VOL_last1"].rank(pct=True, method="average")
         df["RET_mean_5_rank_date"] = df.groupby("DATE")["RET_mean_5"].rank(pct=True, method="average")
@@ -135,74 +137,23 @@ def add_features_plus(X: pd.DataFrame, *, keep_original: bool = True) -> pd.Data
 
     return df
 
-def build_dataset_for_model(df_fe: pd.DataFrame, model: str) -> pd.DataFrame:
+def build_dataset_xgb(df_fe: pd.DataFrame) -> pd.DataFrame:
     """
-    df_fe = DataFrame après add_features_plus(...)
-
-    model:
-      - "xgb" : on garde quasi tout (arbres aiment redondance + ranks + ratios)
-      - "mlp" : on garde lags bruts + un set compact (pas trop redondant)
-      - "seq" : on garde surtout la séquence (RET/VOL) + qq global features + cats
-
-    Retourne un df prêt à être séparé en (num, cat) ou en séquence.
+    Construit le dataset final pour XGBoost / LightGBM :
+    - conserve ID + colonnes catégorielles + lags bruts RET/VOL
+    - conserve toutes les features engineered (fenêtres, ratios, ranks, etc.)
     """
-    model = model.lower().strip()
-    base_keep = []
+    base_keep: list[str] = []
     if "ID" in df_fe.columns:
         base_keep.append("ID")
     base_keep += [c for c in CAT_COLS if c in df_fe.columns]
 
-    # Toutes les engineered cols (ce qui n'est pas base lags/cats/ID)
-    # On va plutôt construire explicitement ce qu'on veut garder.
-    engineered_all = [c for c in df_fe.columns if c not in (base_keep + RET_COLS + VOL_COLS)]
+    # features engineered = tout ce qui n'est pas ID/CAT/lags bruts
+    engineered = [c for c in df_fe.columns if c not in (base_keep + RET_COLS + VOL_COLS)]
 
-    # --- familles ---
-    window_stats = [c for c in df_fe.columns if (
-        c.startswith("RET_mean_") or c.startswith("RET_std_") or c.startswith("RET_absmean_") or
-        c.startswith("VOL_mean_") or c.startswith("VOL_std_")
-    )]
-    momentum = [c for c in ["RET_last1", "RET_last3_sum", "RET_last5_sum", "RET_last10_sum"] if c in df_fe.columns]
-    snr = [c for c in df_fe.columns if c.startswith("RET_snr_")]
-    direction = [c for c in ["RET_pos_frac_20", "RET_neg_frac_20"] if c in df_fe.columns]
-    volume_shock = [c for c in ["VOL_last1", "VOL_shock_1_20", "VOL_ratio_1_20"] if c in df_fe.columns]
-    interactions = [c for c in ["RET1_x_VOL1", "ABSRET1_x_VOL1"] if c in df_fe.columns]
-    slopes = [c for c in ["RET_slope_20", "VOL_slope_20"] if c in df_fe.columns]
-    missing = [c for c in ["RET_nan_count", "VOL_nan_count"] if c in df_fe.columns]
-    ranges = [c for c in ["RET_range_20", "VOL_range_20"] if c in df_fe.columns]
-    ranks_date = [c for c in df_fe.columns if c.endswith("_rank_date")]
+    cols = base_keep + [c for c in (RET_COLS + VOL_COLS) if c in df_fe.columns] + engineered
+    # dédoublonnage tout en gardant l'ordre
+    seen = set()
+    cols = [c for c in cols if not (c in seen or seen.add(c))]
 
-    if model == "xgb":
-        # XGBoost aime:
-        # - lags bruts
-        # - stats fenêtres
-        # - ratios / ranks
-        # - redondance OK
-        keep_num = RET_COLS + VOL_COLS + window_stats + momentum + snr + direction + volume_shock + interactions + slopes + missing + ranges + ranks_date
-        cols = base_keep + [c for c in keep_num if c in df_fe.columns]
-        return df_fe[cols]
-
-    if model == "mlp":
-        # MLP+embeddings:
-        # - on garde les lags bruts (séquence "aplatie")
-        # - et un set compact (éviter trop de redondance)
-        # => on garde surtout mean/std sur (5,10,20) + quelques signaux globaux + missing + 1-2 ranks
-        compact_window = [c for c in window_stats if any(c.endswith(f"_{w}") for w in (5, 10, 20))]
-        compact_snr = [c for c in snr if c in ("RET_snr_5_20", "RET_snr_10_20", "RET_snr_10_10", "RET_snr_3_5")]
-        compact_ranks = [c for c in ranks_date if c in ("RET_last1_rank_date", "VOL_last1_rank_date", "RET_mean_5_rank_date")]
-
-        keep_num = RET_COLS + VOL_COLS + compact_window + momentum + compact_snr + direction + volume_shock + interactions + slopes + missing + compact_ranks
-        cols = base_keep + [c for c in keep_num if c in df_fe.columns]
-        return df_fe[cols]
-
-    if model == "seq":
-        # Modèle séquentiel (CNN/LSTM):
-        # - priorité à la séquence brute RET/VOL
-        # - + quelques features globales utiles (missing + ratio volume)
-        # - ranks optionnels (mais pas indispensables)
-        keep_num = RET_COLS + VOL_COLS + missing + ["VOL_ratio_1_20"]
-        keep_num += [c for c in ["RET1_x_VOL1"] if c in df_fe.columns]  # optionnel
-
-        cols = base_keep + [c for c in keep_num if c in df_fe.columns]
-        return df_fe[cols]
-
-    raise ValueError("model must be one of: 'xgb', 'mlp', 'seq'")
+    return df_fe[cols]

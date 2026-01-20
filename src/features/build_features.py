@@ -50,14 +50,6 @@ def add_features_plus(X: pd.DataFrame, *, keep_original: bool = True) -> pd.Data
         df[f"VOL_std_{w}"] = vW.std(axis=1)
 
     # -----------------------
-    # 2) Momentum
-    # -----------------------
-    df["RET_last1"] = df["RET_1"].astype(float)
-    df["RET_last3_sum"] = R.iloc[:, :3].sum(axis=1)
-    df["RET_last5_sum"] = R.iloc[:, :5].sum(axis=1)
-    df["RET_last10_sum"] = R.iloc[:, :10].sum(axis=1)
-
-    # -----------------------
     # 3) SNR (global + ratios locaux)
     # -----------------------
     df["RET_snr_5_20"] = _safe_div(df["RET_mean_5"], df["RET_std_20"])

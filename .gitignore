@@ -1,1 +1,19 @@
 /data/
+# Environnements virtuels
+venv/
+.env/
+uv/
+
+# Python
+__pycache__/
+*.pyc
+
+# ML artifacts
+*.pkl
+*.joblib
+*.h5
+*.model
+
+*.log
+*.csv
+*.tsv

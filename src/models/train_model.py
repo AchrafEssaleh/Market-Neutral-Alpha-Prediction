@@ -33,10 +33,10 @@ def prepare_rank_data(df, features):
 
 
 # -----------------------
-# CROSS-VALIDATION ENSEMBLE
+# CROSS-VALIDATION ENSEMBLE (OPTIMISÉ)
 # -----------------------
 def cross_val_ensemble(train_df, features):
-    print("\nDémarrage de la CV (Soft Voting XGB + RF + LGBM)...")
+    print("\nDémarrage de la CV Optimisée (Weighted Voting)...")
 
     dates = train_df["DATE"].unique()
     kf = KFold(n_splits=N_SPLITS, shuffle=True, random_state=RANDOM_STATE)
@@ -49,17 +49,19 @@ def cross_val_ensemble(train_df, features):
         df_tr = train_df[train_df["DATE"].isin(d_tr)].copy()
         df_va = train_df[train_df["DATE"].isin(d_va)].copy()
 
-        # --- XGB RANKER ---
+        # --- 1. XGB RANKER (Le Champion - Paramètres Durcis) ---
         X_tr_xgb, y_tr_xgb, g_tr = prepare_rank_data(df_tr, features)
         X_va_xgb, y_va, g_va = prepare_rank_data(df_va, features)
 
         xgb = XGBRanker(
-            n_estimators=1200,
-            learning_rate=0.03,
-            max_depth=6,
-            min_child_weight=50,
-            subsample=0.7,
-            colsample_bytree=0.7,
+            n_estimators=2000,      # AUGMENTATION (avant 1200)
+            learning_rate=0.01,     # RALENTISSEMENT (avant 0.03) -> Plus précis
+            max_depth=5,            # Légère réduction pour éviter l'overfit
+            min_child_weight=100,   # Augmenté pour filtrer le bruit (avant 50)
+            subsample=0.6,          # Plus de diversité
+            colsample_bytree=0.6,
+            reg_alpha=0.5,          # Ajout régularisation L1 (Nettoyage bruit)
+            reg_lambda=1.5,         # Ajout régularisation L2
             objective="rank:pairwise",
             eval_metric="ndcg",
             tree_method="hist",
@@ -70,27 +72,29 @@ def cross_val_ensemble(train_df, features):
         xgb.fit(X_tr_xgb, y_tr_xgb, group=g_tr, verbose=False)
         df_va["score_xgb"] = xgb.predict(X_va_xgb)
 
-        # --- TARGET BINAIRE (Market Neutral) ---
+        # --- TARGET BINAIRE ---
         y_tr_bin = (df_tr[TARGET] > df_tr.groupby("DATE")[TARGET].transform("median")).astype(int)
         y_va_bin = (df_va[TARGET] > df_va.groupby("DATE")[TARGET].transform("median")).astype(int)
 
-        # --- RANDOM FOREST ---
+        # --- 2. RANDOM FOREST (La Sécurité) ---
         rf = RandomForestClassifier(
-            n_estimators=400,
-            max_depth=8,
+            n_estimators=500,
+            max_depth=6,            # Réduit de 8 à 6 (RF overfit vite sur ce dataset)
+            max_features='sqrt',
             random_state=RANDOM_STATE,
             n_jobs=-1
         )
         rf.fit(df_tr[features].fillna(0), y_tr_bin)
         df_va["score_rf"] = rf.predict_proba(df_va[features].fillna(0))[:, 1]
 
-        # --- LIGHTGBM ---
+        # --- 3. LIGHTGBM (Le Challenger) ---
         lgbm = LGBMClassifier(
-            n_estimators=800,
-            learning_rate=0.04,
-            max_depth=6,
-            subsample=0.8,
-            colsample_bytree=0.8,
+            n_estimators=1500,      # Augmenté
+            learning_rate=0.015,    # Ralenti
+            num_leaves=31,          # Plus puissant que max_depth pour LGBM
+            subsample=0.7,
+            colsample_bytree=0.7,
+            reg_alpha=0.1,
             random_state=RANDOM_STATE,
             n_jobs=-1,
             verbose=-1
@@ -98,12 +102,15 @@ def cross_val_ensemble(train_df, features):
         lgbm.fit(df_tr[features].fillna(0), y_tr_bin)
         df_va["score_lgbm"] = lgbm.predict_proba(df_va[features].fillna(0))[:, 1]
 
-        # --- SOFT VOTING ---
+        # --- 4. WEIGHTED SOFT VOTING (La Clé du 52%) ---
+        # On donne plus de poids au Ranker car il est optimisé pour l'ordre
+        # Poids : XGB (50%) + LGBM (30%) + RF (20%)
+        
         df_va["score_ensemble"] = (
-            df_va["score_xgb"].rank(pct=True) +
-            df_va["score_rf"].rank(pct=True) +
-            df_va["score_lgbm"].rank(pct=True)
-        ) / 3
+            0.50 * df_va["score_xgb"].rank(pct=True) +
+            0.30 * df_va["score_lgbm"].rank(pct=True) +
+            0.20 * df_va["score_rf"].rank(pct=True)
+        )
 
         y_pred = df_va.groupby("DATE")["score_ensemble"].transform(
             lambda x: x > x.median()
@@ -117,7 +124,7 @@ def cross_val_ensemble(train_df, features):
     final_score = np.mean(scores)
 
     print("\n" + "=" * 45)
-    print(f"FINAL CV ACCURACY (Market Neutral): {final_score:.4f}")
+    print(f"FINAL CV ACCURACY (Weighted): {final_score:.4f}")
     print("=" * 45 + "\n")
 
     return final_score
@@ -199,11 +206,12 @@ def main():
     test_fe["score_rf"] = final_rf.predict_proba(X_test)[:, 1]
     test_fe["score_lgbm"] = final_lgbm.predict_proba(X_test)[:, 1]
 
+     
     test_fe["score_ensemble"] = (
-        test_fe["score_xgb"].rank(pct=True) +
-        test_fe["score_rf"].rank(pct=True) +
-        test_fe["score_lgbm"].rank(pct=True)
-    ) / 3
+        0.50 * test_fe["score_xgb"].rank(pct=True) +
+        0.30 * test_fe["score_lgbm"].rank(pct=True) +
+        0.20 * test_fe["score_rf"].rank(pct=True)
+    )
 
     test_fe["RET"] = test_fe.groupby("DATE")["score_ensemble"].transform(
         lambda x: x > x.median()

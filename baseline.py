@@ -23,7 +23,7 @@ print(f"Données chargées. Train: {train.shape}, Test: {test.shape}")
 print("Création des features...")
 new_features = []
 
-# Moyennes par secteur et par date
+# FEATURES DE BASE (SECTEUR & DATE - Benchmark QRT)
 shifts = [1]  
 statistics = ['mean']
 gb_features = ['SECTOR', 'DATE']
@@ -38,45 +38,51 @@ for shift in shifts:
         for data in [train, test]:
             data[name] = data.groupby(gb_features)[feat].transform(stat)
 
-# MODIFICATION ETAPE 5 
+# LISTE INITIALE DES COLONNES (Extension à 20 jours) 
 target = 'RET'
-n_shifts = 20  # ON PASSE A 20 JOURS (Maximum disponible)
+n_shifts = 20  # On utilise tout l'historique disponible
 features = ['RET_%d' % (i + 1) for i in range(n_shifts)]
 features += ['VOLUME_%d' % (i + 1) for i in range(n_shifts)]
 features += new_features
 
-# AJOUT : Volatilité (Ecart-type des 20 derniers jours)
-print("Ajout de la feature Volatilité...")
-ret_cols = [f'RET_{i+1}' for i in range(20)]
-for data in [train, test]:
-    data['VOLATILITY_20'] = data[ret_cols].std(axis=1)
-
-# Calcul simple du RSI (Relative Strength Index) (approximatif sur 14 jours)
+# CALCUL DU RSI (Indicateur Technique) 
+print("Calcul du RSI...")
 def calculate_rsi(data, window=14):
-    # On récupère les colonnes RET_1 à RET_14
     cols = [f'RET_{i+1}' for i in range(window)]
-    # On inverse l'ordre pour avoir du plus vieux au plus récent (RET_14... RET_1)
-    # Note : Dans ce dataset, l'ordre temporel précis est parfois flou, 
-    # mais la moyenne des gains vs pertes reste valide.
-    
-    # On sépare gains et pertes
-    # Astuce numpy : on travaille sur tout le tableau d'un coup
     values = data[cols].values
     gains = np.maximum(values, 0)
     losses = np.abs(np.minimum(values, 0))
-    
     avg_gain = np.mean(gains, axis=1)
     avg_loss = np.mean(losses, axis=1)
-    
-    rs = avg_gain / (avg_loss + 1e-10) # Eviter division par zero
+    rs = avg_gain / (avg_loss + 1e-10)
     rsi = 100 - (100 / (1 + rs))
     return rsi
 
-print("Ajout du RSI...")
-train['RSI'] = calculate_rsi(train)
-test['RSI'] = calculate_rsi(test)
+for data in [train, test]:
+    data['RSI'] = calculate_rsi(data)
+
 features.append('RSI')
+
+# VOLATILITE LONG TERME (20 jours) 
+print("Calcul Volatilité 20 jours...")
+ret_cols_20 = [f'RET_{i+1}' for i in range(20)]
+for data in [train, test]:
+    data['VOLATILITY_20'] = data[ret_cols_20].std(axis=1)
+
 features.append('VOLATILITY_20')
+
+# FEATURES EDA (MOMENTUM & VOLATILITE 5 jours) 
+print("Ajout des features EDA (Momentum & Volatilité 5 jours)...")
+cols_5 = [f'RET_{i+1}' for i in range(5)]
+
+for data in [train, test]:
+    # Momentum (Moyenne 5 jours)
+    data['RET_MEAN_5'] = data[cols_5].mean(axis=1)
+    # Volatilité courte (Ecart-type 5 jours)
+    data['VOLATILITY_5'] = data[cols_5].std(axis=1)
+
+features.append('RET_MEAN_5')
+features.append('VOLATILITY_5')
 
 print(f"Features prêtes : {len(features)} variables.")
 

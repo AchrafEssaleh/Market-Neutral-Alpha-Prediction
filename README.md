@@ -75,14 +75,15 @@ Raw returns are extremely noisy → predictive power must come from *aggregation
 ---
 
 ### Advanced Models
-- Tree-based ensemble models
-- Gradient boosting (XGBoost style approach)
-- Controlled depth and regularization to avoid overfitting
-- Validation on a held out set
+- Tree-based ensemble models (Random Forest, XGBoost, LightGBM)
+- Gradient boosting methods to capture non-linear and regime-dependent effects
+- Regularization through depth control, subsampling, and learning rate tuning
+- Cross-validation performed at the DATE level to prevent cross-sectional leakage
+- Final ensemble model combining multiple learners for robustness
 
 ---
 
-### Evaluation
+###  XX Evaluation XX
 - Accuracy comparison vs baseline
 - Feature importance analysis
 - Stability across volatility regimes

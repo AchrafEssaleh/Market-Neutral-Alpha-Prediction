@@ -1,0 +1,10 @@
+# Data
+data/raw/
+data/**/*.csv
+
+# Environments
+.venv/
+__pycache__/
+
+# OS
+.DS_Store

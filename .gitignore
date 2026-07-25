@@ -1,4 +1,13 @@
 .DS_Store
+.vscode
+# data never commit
+data/
+*.csv
+*.parquet
 
-# Raw data (never commit)
-data/raw/
+# Python environment and cahce
+__pycache__/
+*.pyc
+.venv/
+venv/
+env/

@@ -1,0 +1,6 @@
+version,model,acc_mean,acc_std
+v1,always False,0.5011,0.0008
+v1,logistic regression,0.5049,0.0032
+v1,RF (benchmark),0.5148,0.0069
+v1,LGBM default,0.51,0.0027
+v1,LGBM regularized,0.5154,0.0054
